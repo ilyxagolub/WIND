@@ -1,0 +1,143 @@
+@font-face {
+    font-family: "Roboto"; /* Название, которое вы придумали сами */
+    src: url("fonts/RobotoCondensed-VariableFont_wght.ttf") format("truetype"); /* Путь к файлу и его формат */
+    font-weight: normal;
+    font-style: normal;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Roboto"; font-size: 20px;}
+
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background-color: #f0f2f5; /* Тот же фон, что и в чате */
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+/* Логотип */
+img {
+    margin-bottom: 10px;
+    max-width: 150px;
+    height: auto;
+}
+
+h1 {
+    font-size: 26px;
+    color: #333;
+    margin-bottom: 25px;
+    font-weight: 600;
+}
+
+/* Контейнеры для инпутов */
+.data {
+    width: 100%;
+    max-width: 350px;
+    margin-bottom: 15px;
+}
+
+input {
+    width: 100%;
+    padding: 14px 20px;
+    border-radius: 15px; /* Закругление как в чате */
+    border: 1px solid #ddd;
+    background: white;
+    font-size: 16px;
+    outline: none;
+    transition: 0.3s;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+}
+
+input:focus {
+    border-color: #0088cc;
+    box-shadow: 0 0 8px rgba(0, 136, 204, 0.2);
+}
+
+/* Кнопки */
+button {
+    width: 100%;
+    max-width: 350px;
+    padding: 14px;
+    border-radius: 15px;
+    border: none;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.3s;
+    margin-bottom: 12px;
+}
+
+.Blogin {
+    background-color: #0088cc;
+    color: white;
+    box-shadow: 0 4px 15px rgba(0, 136, 204, 0.3);
+}
+
+.Blogin:hover {
+    background-color: #0077b3;
+    transform: translateY(-2px);
+}
+
+.Breg {
+    background-color: transparent;
+    color: #0088cc;
+    border: 2px solid #0088cc;
+}
+
+.Breg:hover {
+    background-color: rgba(0, 136, 204, 0.05);
+}
+
+/* Адаптивность для мобилок */
+@media (max-width: 480px) {
+    body {
+        justify-content: flex-start;
+        padding-top: 50px;
+    }
+    
+    h1 { font-size: 22px; }
+    
+    .data, button {
+        max-width: 100%;
+    }
+}
+
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.toast {
+    background: #333;
+    color: white;
+    padding: 12px 25px;
+    border-radius: 12px;
+    font-size: 14px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    animation: slideUp 0.3s ease, fadeOut 0.3s ease 2.7s forwards;
+    min-width: 250px;
+    text-align: center;
+    border-left: 5px solid #0088cc;
+}
+
+.toast.error { border-left-color: #ff4b2b; }
+.toast.success { border-left-color: #4caf50; }
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}

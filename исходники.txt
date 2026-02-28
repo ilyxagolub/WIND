@@ -1,0 +1,1691 @@
+---app.py---
+from flask import Flask, request, jsonify, send_from_directory
+import json
+import os
+import datetime
+import re
+import time
+
+app = Flask(__name__)
+
+# --- КОНФИГУРАЦИЯ ФАЙЛОВ ---
+USERS_FILE = 'users.json'
+MESSAGES_FILE = 'messages.json'
+FRIENDS_FILE = 'friends.json'
+
+def init_db():
+    for file in [USERS_FILE, MESSAGES_FILE, FRIENDS_FILE]:
+        if not os.path.exists(file):
+            with open(file, 'w', encoding='utf-8') as f:
+                json.dump([], f)
+
+init_db()
+
+# Оперативное хранилище статусов (в памяти сервера)
+user_typing = {} 
+user_last_seen = {}
+
+# --- СТАТУСЫ И ПИНГИ ---
+
+@app.route('/api/ping/<username>', methods=['POST'])
+def ping(username):
+    user_last_seen[username] = time.time()
+    return jsonify({"status": "ok"})
+
+@app.route('/api/users_status', methods=['GET'])
+def get_users_status():
+    now = time.time()
+    # Пользователь онлайн, если пинг был менее 15 секунд назад
+    return jsonify({u: ("online" if (now - t) < 15 else "offline") for u, t in user_last_seen.items()})
+
+@app.route('/api/typing/<username>/<target>', methods=['POST'])
+def set_typing(username, target):
+    user_typing[username] = {"target": target, "time": time.time()}
+    return jsonify({"status": "ok"})
+
+@app.route('/api/get_typing/<current_user>/<chat_with>', methods=['GET'])
+def get_typing(current_user, chat_with):
+    data = user_typing.get(chat_with)
+    if data and data['target'] == current_user and (time.time() - data['time']) < 4:
+        return jsonify({"typing": True})
+    return jsonify({"typing": False})
+
+# --- АВТОРИЗАЦИЯ ---
+
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.json
+    u, p = data.get('username'), data.get('password')
+    with open(USERS_FILE, 'r', encoding='utf-8') as f:
+        users = json.load(f)
+    if any(user['username'] == u for user in users):
+        return jsonify({"message": "Логин уже занят"}), 400
+    users.append({"username": u, "password": p})
+    with open(USERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(users, f, indent=4, ensure_ascii=False)
+    return jsonify({"message": "OK"}), 201
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    u, p = data.get('username'), data.get('password')
+    with open(USERS_FILE, 'r', encoding='utf-8') as f:
+        users = json.load(f)
+    if any(user['username'] == u and user['password'] == p for user in users):
+        return jsonify({"message": "OK"}), 200
+    return jsonify({"message": "Ошибка"}), 401
+
+@app.route('/api/users', methods=['GET'])
+def get_users():
+    with open(USERS_FILE, 'r', encoding='utf-8') as f:
+        users = json.load(f)
+    return jsonify([u['username'] for u in users])
+
+# --- ЛОГИКА СООБЩЕНИЙ ---
+
+@app.route('/api/send', methods=['POST'])
+def send_message():
+    data = request.json
+    sender, receiver, text = data.get('sender'), data.get('receiver'), data.get('text')
+    reply_to = data.get('reply_to') # Получаем данные об ответе (если есть)
+
+    if not text: return jsonify({"status": "error"}), 400
+
+    with open(MESSAGES_FILE, 'r', encoding='utf-8') as f:
+        messages = json.load(f)
+
+    new_msg = {
+        "sender": sender,
+        "receiver": receiver,
+        "text": text,
+        "time": datetime.datetime.now().strftime("%H:%M:%S"),
+        "read": False,
+        "mentioned_user": None,
+        "reply_to": reply_to # Сохраняем структуру {"sender": "...", "text": "..."}
+    }
+    
+    # Логика упоминаний в глобальном чате
+    if receiver == "GLOBAL_CHAT":
+        m = re.findall(r'@(\w+)', text)
+        if m: new_msg["mentioned_user"] = m[0]
+
+    messages.append(new_msg)
+    with open(MESSAGES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(messages, f, indent=4, ensure_ascii=False)
+    return jsonify({"status": "ok"})
+
+@app.route('/api/messages/<user1>/<user2>', methods=['GET'])
+def get_messages(user1, user2):
+    with open(MESSAGES_FILE, 'r', encoding='utf-8') as f:
+        messages = json.load(f)
+    
+    chat_history, updated = [], False
+    for m in messages:
+        is_p = (m['sender'] == user1 and m['receiver'] == user2) or (m['sender'] == user2 and m['receiver'] == user1)
+        is_g = (user2 == "GLOBAL_CHAT" and m['receiver'] == "GLOBAL_CHAT")
+        
+        if is_p or is_g:
+            chat_history.append(m)
+            # Пометка прочитанным
+            if m['receiver'] == user1 and not m.get('read'):
+                m['read'] = True; updated = True
+            # Пометка прочитанным при упоминании
+            if is_g and m.get('mentioned_user') == user1 and not m.get('read'):
+                m['read'] = True; updated = True
+
+    if updated:
+        with open(MESSAGES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(messages, f, indent=4, ensure_ascii=False)
+    return jsonify(chat_history)
+
+@app.route('/api/edit_message', methods=['POST'])
+def edit_message():
+    data = request.json
+    s, t, old, new = data.get('sender'), data.get('time'), data.get('old_text'), data.get('new_text')
+    with open(MESSAGES_FILE, 'r', encoding='utf-8') as f:
+        messages = json.load(f)
+    for m in messages:
+        if m['sender'] == s and m['time'] == t and m['text'] == old:
+            m['text'] = new + " (ред.)"; break
+    with open(MESSAGES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(messages, f, indent=4, ensure_ascii=False)
+    return jsonify({"status": "ok"})
+
+@app.route('/api/delete_message', methods=['POST'])
+def delete_message():
+    data = request.json
+    s, t, txt = data.get('sender'), data.get('time'), data.get('text')
+    with open(MESSAGES_FILE, 'r', encoding='utf-8') as f:
+        messages = json.load(f)
+    messages = [m for m in messages if not (m['sender'] == s and m['time'] == t and m['text'] == txt)]
+    with open(MESSAGES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(messages, f, indent=4, ensure_ascii=False)
+    return jsonify({"status": "ok"})
+
+@app.route('/api/clear_chat', methods=['POST'])
+def clear_chat():
+    data = request.json
+    me, target = data.get('me'), data.get('with_user')
+    with open(MESSAGES_FILE, 'r', encoding='utf-8') as f:
+        messages = json.load(f)
+    messages = [m for m in messages if not ((m['sender'] == me and m['receiver'] == target) or (m['sender'] == target and m['receiver'] == me))]
+    with open(MESSAGES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(messages, f, indent=4, ensure_ascii=False)
+    return jsonify({"status": "ok"})
+
+@app.route('/api/messages_all/<username>', methods=['GET'])
+def get_all_messages(username):
+    with open(MESSAGES_FILE, 'r', encoding='utf-8') as f:
+        messages = json.load(f)
+    return jsonify([m for m in messages if m['receiver'] == username or m.get('mentioned_user') == username])
+
+# --- ЛОГИКА ДРУЗЕЙ ---
+
+@app.route('/api/add_friend', methods=['POST'])
+def add_friend():
+    data = request.json
+    me, fr = data.get('me'), data.get('friend')
+    with open(FRIENDS_FILE, 'r', encoding='utf-8') as f:
+        friends = json.load(f)
+    if not any((f['u1']==me and f['u2']==fr) or (f['u1']==fr and f['u2']==me) for f in friends):
+        friends.append({"u1": me, "u2": fr})
+        with open(FRIENDS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(friends, f, indent=4)
+    return jsonify({"status": "ok"})
+
+@app.route('/api/delete_friend', methods=['POST'])
+def delete_friend():
+    data = request.json
+    me, fr = data.get('me'), data.get('friend')
+    with open(FRIENDS_FILE, 'r', encoding='utf-8') as f:
+        friends = json.load(f)
+    friends = [f for f in friends if not ((f['u1']==me and f['u2']==fr) or (f['u1']==fr and f['u2']==me))]
+    with open(FRIENDS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(friends, f, indent=4)
+    return jsonify({"status": "ok"})
+
+@app.route('/api/get_friends/<username>', methods=['GET'])
+def get_friends(username):
+    with open(FRIENDS_FILE, 'r', encoding='utf-8') as f:
+        friends = json.load(f)
+    res = []
+    for f in friends:
+        if f['u1'] == username: res.append(f['u2'])
+        if f['u2'] == username: res.append(f['u1'])
+    return jsonify(list(set(res)))
+
+# --- СТАТИЧЕСКИЕ ФАЙЛЫ ---
+
+@app.route('/')
+def home(): 
+    return send_from_directory('.', 'login.html')
+
+@app.route('/<path:filename>.html')
+def send_html(filename): 
+    return send_from_directory('.', f'{filename}.html')
+
+@app.route('/src/<path:path>')
+def send_src(path): 
+    return send_from_directory('src', path)
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
+
+
+
+
+---index.html---
+<<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WIDE</title>
+    <link rel="icon" type="image/png" href="src/img/favicon.png">
+    <link rel="stylesheet" href="src/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="src/js/chat.js" defer></script>
+</head>
+<body>
+    <div class="main-wrapper">
+        <!-- Логотип сверху, как в окне логина -->
+        <div class="top-logo">
+            <img src="src/img/Logo no BG.png" alt="Logo" width="80" height="80">
+        </div>
+
+        <div class="messenger-container shadow-box">
+            
+            <!-- Боковая панель -->
+            <aside class="sidebar">
+                <div class="user-profile-header">
+                    <span id="myUsername">Загрузка...</span>
+                    <button onclick="logout()" class="btn-logout-small">Выход</button>
+                </div>
+                
+                <div class="search-box">
+                    <input type="text" id="userSearch" placeholder="Поиск друзей..." autocomplete="off">
+                </div>
+
+                <div class="global-chat-btn" onclick="selectGlobalChat()">
+                    <span>🌍 Общая мусорка</span>
+                </div>
+
+                <div class="contacts-list" id="contactsList">
+                    <!-- Список контактов -->
+                </div>
+            </aside>
+
+            <!-- Основное окно чата -->
+            <main class="chat-window">
+                <div id="chatHeader" class="chat-header">
+                    <span id="chatTitle">Выберите чат, чтобы начать</span>
+                </div>
+                
+                <div class="messages" id="messagesDisplay">
+                    <div class="welcome-screen">
+                        <!-- Большой логотип для ПК -->
+                         <p>Выберите контакт, чтобы начать общение</p>
+                        <img src="src/img/Logo no BG.png" alt="WIDE LOGO" class="big-welcome-logo">
+                    </div>
+                </div>
+
+                <div id="mentionList" class="mention-suggestions" style="display: none;"></div>
+                <div id="replyPreview" class="reply-preview" style="display: none;">
+                    <div class="reply-content">
+                        <small id="replyUser"></small>
+                        <span id="replyText"></span>
+                    </div>
+                    <button onclick="cancelReply()">✕</button>
+                </div>
+                <div class="input-area">
+                    <input type="text" id="messageInput" placeholder="Ваше сообщение..." autocomplete="off">
+                    <button id="sendBtn" class="btn-send">➤</button>
+                </div>
+            </main>
+
+        </div>
+    </div>
+    <div id="toast-container" class="toast-container"></div>
+    <div id="contextMenu" class="context-menu" style="display: none;">
+         <div onclick="prepareReply()">💬 Ответить</div>
+        <div onclick="prepareEdit()">✏️ Редактировать</div>
+        <div onclick="confirmDelete()" style="color: #ff4b2b;">🗑️ Удалить</div>
+    </div>
+</body>
+</html>
+
+
+
+
+---login.html---
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <title>WIDE Авторизация</title>
+    <link rel="icon" type="image/png" href="src/img/favicon.png">
+    <link rel="stylesheet" href="src/css/login.css">
+    <script src="src/js/login.js" defer></script>
+</head>
+<body>
+    <img src="src/img/Logo no BG.png" alt="Logo" width="250" height="250" style="margin-top: 150px;">
+
+    <h1 style="text-align: center; font-size: 30px;">Авторизация</h1>
+
+    <div class="data"><input type="username" id="username" maxlength="20" placeholder="Логин"></div>
+    <div class="data"><input type="password" id="password" placeholder="Пароль"></div>
+
+    <button type="button" id="LoginButton" class="Blogin">Войти</button>
+    <button type="button" onclick="window.location.href='reg.html'"; class="Breg">Регистрация</button>
+
+    <div id="toast-container" class="toast-container"></div>
+</body>
+</html>
+
+
+
+
+---reg.html---
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <title>WIDE Регистрация</title>
+    <link rel="icon" type="image/png" href="src/img/favicon.png">
+    <link rel="stylesheet" href="src/css/reg.css">
+    <script src="src/js/reg.js" defer></script>
+</head>
+<body>
+    <img src="src/img/Logo no BG.png" alt="Logo" width="250" height="250" style="margin-top: 150px;">
+
+    <h1 style="text-align: center; font-size: 30px;">Регистрация</h1>
+
+    <div class="data"><input type="username" id="usernameReg" maxlength="20" placeholder="Логин"></div>
+    <div class="data"><input type="password" id="passwordReg" placeholder="Пароль"></div>
+    <div class="data"><input type="password" id="repeatPassReg" placeholder="Повторите пароль"></div>
+
+    <div><button type="button" id="regButton" class="Breg">Регистрация</button></div>
+    
+    <div>
+        <h1>Уже есть аккаунт?</h1>
+        <a href="login.html">Войти</a>
+    </div>
+    <div id="toast-container" class="toast-container"></div>
+</body>
+</html>
+
+
+
+
+---login.css---
+@font-face {
+    font-family: "Roboto"; /* Название, которое вы придумали сами */
+    src: url("fonts/RobotoCondensed-VariableFont_wght.ttf") format("truetype"); /* Путь к файлу и его формат */
+    font-weight: normal;
+    font-style: normal;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Roboto"; font-size: 20px;}
+
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background-color: #f0f2f5; /* Тот же фон, что и в чате */
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+/* Логотип */
+img {
+    margin-bottom: 10px;
+    max-width: 150px;
+    height: auto;
+}
+
+h1 {
+    font-size: 26px;
+    color: #333;
+    margin-bottom: 25px;
+    font-weight: 600;
+}
+
+/* Контейнеры для инпутов */
+.data {
+    width: 100%;
+    max-width: 350px;
+    margin-bottom: 15px;
+}
+
+input {
+    width: 100%;
+    padding: 14px 20px;
+    border-radius: 15px; /* Закругление как в чате */
+    border: 1px solid #ddd;
+    background: white;
+    font-size: 16px;
+    outline: none;
+    transition: 0.3s;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+}
+
+input:focus {
+    border-color: #0088cc;
+    box-shadow: 0 0 8px rgba(0, 136, 204, 0.2);
+}
+
+/* Кнопки */
+button {
+    width: 100%;
+    max-width: 350px;
+    padding: 14px;
+    border-radius: 15px;
+    border: none;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.3s;
+    margin-bottom: 12px;
+}
+
+.Blogin {
+    background-color: #0088cc;
+    color: white;
+    box-shadow: 0 4px 15px rgba(0, 136, 204, 0.3);
+}
+
+.Blogin:hover {
+    background-color: #0077b3;
+    transform: translateY(-2px);
+}
+
+.Breg {
+    background-color: transparent;
+    color: #0088cc;
+    border: 2px solid #0088cc;
+}
+
+.Breg:hover {
+    background-color: rgba(0, 136, 204, 0.05);
+}
+
+/* Адаптивность для мобилок */
+@media (max-width: 480px) {
+    body {
+        justify-content: flex-start;
+        padding-top: 50px;
+    }
+    
+    h1 { font-size: 22px; }
+    
+    .data, button {
+        max-width: 100%;
+    }
+}
+
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.toast {
+    background: #333;
+    color: white;
+    padding: 12px 25px;
+    border-radius: 12px;
+    font-size: 14px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    animation: slideUp 0.3s ease, fadeOut 0.3s ease 2.7s forwards;
+    min-width: 250px;
+    text-align: center;
+    border-left: 5px solid #0088cc;
+}
+
+.toast.error { border-left-color: #ff4b2b; }
+.toast.success { border-left-color: #4caf50; }
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+
+
+
+---reg.css---
+@font-face {
+    font-family: "Roboto"; /* Название, которое вы придумали сами */
+    src: url("fonts/RobotoCondensed-VariableFont_wght.ttf") format("truetype"); /* Путь к файлу и его формат */
+    font-weight: normal;
+    font-style: normal;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Roboto"; font-size: 20px;}
+
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background-color: #f0f2f5;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+img {
+    margin-bottom: 10px;
+    max-width: 120px;
+    height: auto;
+}
+
+h1 {
+    font-size: 26px;
+    color: #333;
+    margin-bottom: 20px;
+    font-weight: 600;
+}
+
+.data {
+    width: 100%;
+    max-width: 350px;
+    margin-bottom: 12px;
+}
+
+input {
+    width: 100%;
+    padding: 14px 20px;
+    border-radius: 15px;
+    border: 1px solid #ddd;
+    background: white;
+    font-size: 16px;
+    outline: none;
+    transition: 0.3s;
+}
+
+input:focus {
+    border-color: #0088cc;
+}
+
+.Breg {
+    width: 100%;
+    max-width: 350px;
+    padding: 14px;
+    border-radius: 15px;
+    border: none;
+    background-color: #0088cc;
+    color: white;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.3s;
+    margin-top: 10px;
+    box-shadow: 0 4px 15px rgba(0, 136, 204, 0.3);
+}
+
+.Breg:hover {
+    background-color: #0077b3;
+    transform: translateY(-2px);
+}
+
+/* Ссылка "Войти" */
+h1 + h1, div > h1 {
+    font-size: 18px;
+    margin-top: 20px;
+    color: #666;
+}
+
+a {
+    color: #0088cc;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 16px;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* Адаптивность для мобилок */
+@media (max-width: 480px) {
+    body {
+        justify-content: flex-start;
+        padding-top: 30px;
+    }
+    
+    .data, .Breg {
+        max-width: 100%;
+    }
+}
+
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.toast {
+    background: #333;
+    color: white;
+    padding: 12px 25px;
+    border-radius: 12px;
+    font-size: 14px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    animation: slideUp 0.3s ease, fadeOut 0.3s ease 2.7s forwards;
+    min-width: 250px;
+    text-align: center;
+    border-left: 5px solid #0088cc;
+}
+
+.toast.error { border-left-color: #ff4b2b; }
+.toast.success { border-left-color: #4caf50; }
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+
+
+
+---style.css---
+@font-face {
+    font-family: "Roboto"; /* Название, которое вы придумали сами */
+    src: url("fonts/RobotoCondensed-VariableFont_wght.ttf") format("truetype"); /* Путь к файлу и его формат */
+    font-weight: normal;
+    font-style: normal;
+}
+
+/* --- ГЛОБАЛЬНЫЕ СТИЛИ --- */
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Roboto"; font-size: 20px;}
+
+body, html { 
+    height: 100%; 
+    font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+    background-color: #f0f2f5; 
+    overflow: hidden; 
+}
+
+/* Обертка для ПК (центрирование мессенджера) */
+.main-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100vh;
+}
+
+.top-logo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.top-logo h1 { font-size: 24px; color: #333; margin-top: -5px; }
+
+/* КОНТЕЙНЕР МЕССЕНДЖЕРА */
+.messenger-container {
+    display: flex;
+    height: 85vh;
+    width: 95%;
+    max-width: 1100px;
+    background: white;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    border: 1px solid #e0e0e0;
+    position: relative;
+}
+
+/* САЙДБАР (Список контактов) */
+.sidebar {
+    width: 320px;
+    background: #ffffff;
+    border-right: 1px solid #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    z-index: 10;
+    transition: transform 0.3s ease;
+}
+
+.user-profile-header {
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #f8f8f8;
+}
+
+#myUsername { font-weight: 700; color: #333; font-size: 17px; }
+
+.btn-logout-small {
+    background: #ff4b2b;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.search-box { padding: 12px 15px; }
+.search-box input {
+    width: 100%;
+    padding: 10px 15px;
+    border-radius: 12px;
+    border: 1px solid #eee;
+    background: #f9f9f9;
+    outline: none;
+}
+
+/* Кнопка общего чата */
+.global-chat-btn {
+    margin: 5px 15px 10px;
+    padding: 12px 15px;
+    background: #e3f2fd;
+    border-radius: 12px;
+    cursor: pointer;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #0077b3;
+}
+
+/* ЭЛЕМЕНТЫ КОНТАКТОВ */
+.contacts-list { flex-grow: 1; overflow-y: auto; }
+.contact-item {
+    padding: 12px 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    border-bottom: 1px solid #fafafa;
+    position: relative;
+}
+.contact-item:hover { background: #f9f9f9; }
+.contact-item.active { background: #e3f2fd; border-left: 4px solid #0088cc; }
+
+/* Аватарка */
+.avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 16px;
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+
+.contact-item-info { display: flex; align-items: center; flex-grow: 1; }
+
+/* Точка онлайн */
+.status-dot {
+    width: 10px;
+    height: 10px;
+    background-color: #4caf50;
+    border-radius: 50%;
+    margin-left: 8px;
+    border: 2px solid white;
+    box-shadow: 0 0 5px rgba(76, 175, 80, 0.5);
+}
+
+/* Кнопка удаления */
+.delete-friend-btn {
+    opacity: 0;
+    background: none;
+    border: none;
+    color: #ff4b2b;
+    cursor: pointer;
+    font-size: 18px;
+}
+.contact-item:hover .delete-friend-btn { opacity: 1; }
+
+/* ОКНО ЧАТА */
+.chat-window {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    background: #f0f2f5;
+    height: 100%;
+    position: relative;
+}
+
+/* ШАПКА ЧАТА (ИСПРАВЛЕННАЯ) */
+.chat-header {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    padding: 0 15px;
+    background: #fff;
+    border-bottom: 1px solid #eee;
+    height: 65px;
+    min-height: 65px; /* Строгая высота */
+    width: 100%;
+    gap: 10px;        /* Расстояние между кнопкой назад и текстом */
+}
+
+.header-text-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex: 1;          /* Занимает всё свободное место */
+    min-width: 0;     /* Важно для работы ellipsis внутри flex */
+}
+
+#chatTitle {
+    font-weight: 600;
+    font-size: 17px;
+    color: #333;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis; /* Три точки если имя слишком длинное */
+}
+
+.typing-text {
+    font-size: 12px;
+    color: #0088cc;
+    font-style: italic;
+    height: 14px;
+    margin-top: 1px;
+    animation: blink 1.5s infinite;
+}
+
+@keyframes blink { 0%, 100% {opacity: 0.5;} 50% {opacity: 1;} }
+
+.clear-chat-btn {
+    font-size: 12px;
+    color: #999;
+    background: #f0f0f0;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+/* 3. Кнопка назад (уменьшим отступы, чтобы не ело место) */
+.back-btn {
+    display: none;
+    background: #0088cc;
+    color: white;
+    border: none;
+    width: 40px;      /* Сделаем её квадратной для экономии места */
+    height: 40px;
+    border-radius: 10px;
+    flex-shrink: 0;   /* Запрещаем кнопке сжиматься */
+    cursor: pointer;
+}
+
+/* СООБЩЕНИЯ */
+/* 4. Область сообщений */
+.messages {
+    flex-grow: 1;
+    padding: 15px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+}
+
+.msg {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 18px;
+    font-size: 15px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    position: relative;
+    
+    /* ВОТ ЭТИ СТРОКИ ИСПРАВЯТ ВЫЛЕТ ТЕКСТА: */
+    word-wrap: break-word;       /* Перенос длинных слов */
+    word-break: break-word;      /* Для старых браузеров */
+    overflow-wrap: break-word;   /* Современный стандарт */
+    display: inline-block;       /* Чтобы пузырек облегал текст */
+}
+
+.my-msg {
+    align-self: flex-end; /* Прижимаем к правому краю */
+    background: #0088cc;
+    color: white;
+    border-bottom-right-radius: 4px;
+    
+    /* ОТСТУП СЛЕВА: гарантирует, что сообщение не коснется левого края */
+    /* margin-right: 10px; */
+}
+.guest-msg { align-self: flex-start; background: #fff; color: #333; border-bottom-left-radius: 4px; margin-right: 15%; }
+
+.msg small { display: block; font-size: 10px; margin-top: 5px; opacity: 0.7; text-align: right; }
+
+/* ОБЛАСТЬ ВВОДА */
+.input-area {
+    background: #fff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-top: 1px solid #eee;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    padding-left: 5px;
+    padding-right: 5px;
+}
+
+.input-area input {
+    flex-grow: 1;
+    padding: 12px 18px;
+    border-radius: 25px;
+    border: 1px solid #f0f0f0;
+    background: #f9f9f9;
+    outline: none;
+}
+
+.btn-send {
+    background: #0088cc;
+    color: white;
+    border: none;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+/* ПРИВЕТСТВЕННЫЙ ЭКРАН */
+.welcome-screen {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    opacity: 0.5;
+}
+
+.big-welcome-logo { width: 180px; margin-bottom: 20px; filter: grayscale(1); }
+
+/* ТОСТЫ (Уведомления) */
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+}
+.toast {
+    background: #333; color: white; padding: 12px 20px;
+    border-radius: 10px; margin-top: 10px; border-left: 5px solid #0088cc;
+}
+
+/* Значки непрочитанных сообщений */
+
+
+.unread-badge.mention {
+    background: #ff4b2b;
+    color: #ffffff;
+    font-size: 12px;
+    border-radius: 50%;
+    min-width: 12px;
+    height: 24px;
+}
+
+/* Выпадающий список упоминаний (@) */
+.mention-suggestions {
+    position: absolute;
+    bottom: 70px;
+    left: 15px;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    box-shadow: 0 -5px 15px rgba(0,0,0,0.1);
+    max-height: 150px;
+    overflow-y: auto;
+    z-index: 100;
+    width: 200px;
+}
+
+.mention-item {
+    padding: 10px 15px;
+    cursor: pointer;
+    font-size: 14px;
+    border-bottom: 1px solid #eee;
+}
+
+.mention-item:hover {
+    background: #f0f2f5;
+    color: #0088cc;
+}
+
+/* Подсветка упоминания в тексте сообщения */
+.mention-highlight {
+    color: #ffeb3b;
+    font-weight: bold;
+}
+.guest-msg .mention-highlight {
+    color: #0088cc;
+}
+
+/* Исправление для кнопки добавления в поиске */
+.add-friend-btn {
+    background: #4caf50;
+    color: white;
+    border: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.unread-badge {
+    background: #0088cc; /* Твой основной синий цвет */
+    color: white;
+    font-size: 12px;
+    font-weight: bold;
+    min-width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    pointer-events: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Красный стиль специально для упоминаний (@) */
+.unread-badge.mention {
+    background: #ff4b2b; /* Красный цвет */
+    font-size: 14px;
+    padding-bottom: 2px; /* Чтобы @ стояла ровно по центру */
+}
+
+/* Контейнер общей мусорки делаем относительным для позиционирования значка */
+.global-chat-btn {
+    position: relative;
+    margin: 5px 15px 10px;
+    padding: 12px 15px;
+    background: #e3f2fd;
+    border-radius: 12px;
+    cursor: pointer;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #0077b3;
+    transition: background 0.2s;
+}
+
+.global-chat-btn:hover {
+    background: #d1e9ff;
+}
+
+/* Стили для элементов списка контактов, чтобы значки стояли ровно */
+.contact-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Контейнер для времени и статуса */
+.msg-meta {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 4px;
+    font-size: 10px;
+    opacity: 0.8;
+}
+
+.read-status {
+    font-size: 12px;
+    line-height: 1;
+}
+
+/* Цвет галочек для прочитанного (синий на белом фоне, белый на синем) */
+.my-msg .read-status.is-read { color: #fff; opacity: 1; }
+.my-msg .read-status { color: #fff; opacity: 0.6; }
+
+.guest-msg .read-status.is-read { color: #0088cc; }
+
+/* МОБИЛЬНАЯ ВЕРСИЯ */
+@media (max-width: 768px) {
+    .top-logo { display: none; }
+    .messenger-container { width: 100%; height: 100vh; border-radius: 0; border: none; }
+    .sidebar { position: absolute; width: 100%; height: 100%; left: 0; top: 0; }
+    .sidebar.mobile-hidden { transform: translateX(-100%); }
+    .back-btn { display: block; }
+    .input-area { padding-bottom: 30px; }
+}
+
+/* Анимация появления контента чата */
+.chat-appear-active {
+    animation: chatFadeIn 0.3s ease-out forwards;
+}
+
+@keyframes chatFadeIn {
+    from { 
+        opacity: 0; 
+        transform: translateY(10px); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateY(0); 
+    }
+}
+
+/* Убедимся, что сообщения не анимируются сами по себе при новых поступлениях */
+.msg {
+    animation: none; 
+}
+
+.context-menu {
+    position: fixed;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+    z-index: 1000;
+    padding: 8px 0;
+    min-width: 150px;
+}
+
+.context-menu div {
+    padding: 10px 20px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: 0.2s;
+}
+
+.context-menu div:hover {
+    background: #f0f2f5;
+}
+
+/* Подсветим сообщение, на которое нажали */
+.msg.context-active {
+    outline: 2px solid #0088cc;
+}
+
+/* Превью над инпутом */
+.reply-preview {
+    background: #fff;
+    padding: 10px 15px;
+    border-top: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.reply-content { border-left: 3px solid #0088cc; padding-left: 10px; overflow: hidden; }
+.reply-content small { color: #0088cc; font-weight: bold; display: block; }
+.reply-content span { font-size: 13px; color: #666; white-space: nowrap; text-overflow: ellipsis; }
+
+/* Цитата внутри сообщения */
+.msg-reply-quote {
+    background: rgba(0,0,0,0.05);
+    border-left: 3px solid #0088cc;
+    padding: 5px 8px;
+    margin-bottom: 5px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.my-msg .msg-reply-quote { background: rgba(255,255,255,0.2); border-left-color: #fff; }
+
+
+
+
+---chat.js---
+document.addEventListener('DOMContentLoaded', async () => {
+    const myUsername = localStorage.getItem('currentUser');
+    if (!myUsername) { window.location.href = 'login.html'; return; }
+
+    const els = {
+        myUser: document.getElementById('myUsername'),
+        contacts: document.getElementById('contactsList'),
+        search: document.getElementById('userSearch'),
+        display: document.getElementById('messagesDisplay'),
+        input: document.getElementById('messageInput'),
+        send: document.getElementById('sendBtn'),
+        mentions: document.getElementById('mentionList'),
+        context: document.getElementById('contextMenu'),
+        replyPreview: document.getElementById('replyPreview'),
+        replyUser: document.getElementById('replyUser'),
+        replyText: document.getElementById('replyText')
+    };
+
+    els.myUser.textContent = myUsername;
+    let allU = [], myF = [], curChat = null, lastCount = "", lastTyping = 0;
+    let selMsg = null, selEl = null, currentReplyData = null;
+
+    // --- СЕРВИСНЫЕ ФУНКЦИИ ---
+    async function sync() {
+        try {
+            const uR = await fetch('/api/users'); allU = await uR.json();
+            const fR = await fetch(`/api/get_friends/${myUsername}`); const nF = await fR.json();
+            if (JSON.stringify(nF.sort()) !== JSON.stringify(myF.sort())) {
+                myF = nF; if (els.search.value === "") render(myF);
+            }
+        } catch(e){}
+    }
+
+    function render(list, isSearch = false) {
+        els.contacts.innerHTML = '';
+        list.forEach(u => {
+            if (u === myUsername) return;
+            const isF = myF.includes(u);
+            const div = document.createElement('div');
+            div.className = `contact-item ${curChat === u ? 'active' : ''}`;
+            const color = ['#0088cc','#4caf50','#ff9800','#9c27b0','#f44336'][u.length % 5];
+            div.innerHTML = `
+                <div class="contact-item-info" onclick="openChat('${u}')">
+                    <div class="avatar" style="background:${color}">${u[0].toUpperCase()}</div>
+                    <span>${u}</span>
+                </div>
+                ${isSearch && !isF ? `<button onclick="addFriend(event,'${u}')" class="add-friend-btn">+</button>` : `<button onclick="deleteFriend(event,'${u}')" class="delete-friend-btn">×</button>`}
+            `;
+            els.contacts.appendChild(div);
+        });
+        updateBadges(); updateStatuses();
+    }
+
+    // --- ОТВЕТЫ (REPLY) ---
+    window.prepareReply = () => {
+        currentReplyData = { sender: selMsg.sender, text: selMsg.text };
+        els.replyUser.textContent = selMsg.sender;
+        els.replyText.textContent = selMsg.text.substring(0, 50);
+        els.replyPreview.style.display = 'flex';
+        els.input.focus();
+    };
+
+    window.cancelReply = () => {
+        currentReplyData = null;
+        els.replyPreview.style.display = 'none';
+    };
+
+    window.scrollToMessage = (searchText) => {
+        const messages = els.display.querySelectorAll('.msg');
+        for (let m of messages) {
+            const span = m.querySelector('span');
+            if (span && span.textContent.includes(searchText)) {
+                m.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                m.style.transition = 'background 0.5s';
+                m.style.background = 'rgba(255, 235, 59, 0.4)';
+                setTimeout(() => m.style.background = '', 1500);
+                break;
+            }
+        }
+    };
+
+    // --- ЧАТ И СООБЩЕНИЯ ---
+    window.openChat = (u) => {
+        if (curChat === u) return; curChat = u; lastCount = ""; els.display.innerHTML = '';
+        cancelReply();
+        document.getElementById('chatHeader').innerHTML = `
+            <button class="back-btn" onclick="closeChat()">←</button>
+            <div class="header-text-container">
+                <span id="chatTitle">${u === "GLOBAL_CHAT" ? '🌍 Общая мусорка' : 'Чат с '+u}</span>
+                <div id="typingIndicator" class="typing-text" style="display:none;">печатает...</div>
+            </div>
+            ${u !== "GLOBAL_CHAT" ? `<button class="clear-chat-btn" onclick="clearCurrentChat()">Очистить</button>` : ''}
+        `;
+        if (window.innerWidth <= 768) document.querySelector('.sidebar').classList.add('mobile-hidden');
+        triggerAnim(); loadMessages(); render(myF);
+    };
+
+    window.selectGlobalChat = () => window.openChat("GLOBAL_CHAT");
+
+    async function loadMessages() {
+        if (!curChat) return;
+        try {
+            const r = await fetch(`/api/messages/${myUsername}/${curChat}`);
+            const msgs = await r.json();
+            const lastM = msgs[msgs.length - 1];
+            const check = msgs.length + (lastM ? lastM.text + lastM.read : "");
+            if (check === lastCount) return;
+            
+            const isBottom = els.display.scrollHeight - els.display.scrollTop <= els.display.clientHeight + 100;
+            lastCount = check; els.display.innerHTML = '';
+
+            msgs.forEach(m => {
+                const div = document.createElement('div');
+                div.className = `msg ${m.sender === myUsername ? 'my-msg' : 'guest-msg'}`;
+                
+                // Контекстное меню для ВСЕХ сообщений (для ответа)
+                div.oncontextmenu = (e) => showContext(e, m, div);
+                let timer;
+                div.addEventListener('touchstart', (e) => {
+                    timer = setTimeout(() => {
+                        const t = e.touches[0];
+                        showContext({preventDefault:()=>e.preventDefault(), pageX:t.pageX, pageY:t.pageY}, m, div);
+                        if (navigator.vibrate) navigator.vibrate(50);
+                    }, 600);
+                }, {passive: false});
+                div.addEventListener('touchend', () => clearTimeout(timer));
+                div.addEventListener('touchmove', () => clearTimeout(timer));
+
+                let replyHtml = '';
+                if (m.reply_to) {
+                    replyHtml = `<div class="msg-reply-quote" onclick="scrollToMessage('${m.reply_to.text}')">
+                                    <small>${m.reply_to.sender}</small>
+                                    <span>${m.reply_to.text.substring(0,30)}...</span>
+                                 </div>`;
+                }
+
+                let txt = m.text.replace(`@${myUsername}`, `<span class="mention-highlight">@${myUsername}</span>`);
+                const status = m.sender === myUsername ? `<span class="read-status ${m.read ? 'is-read':''}">${m.read ? '✓✓':'✓'}</span>` : '';
+
+                div.innerHTML = `
+                    ${replyHtml}
+                    ${curChat === "GLOBAL_CHAT" && m.sender !== myUsername ? `<b style="font-size:11px;color:#0088cc;display:block">${m.sender}</b>` : ''}
+                    <span>${txt}</span>
+                    <div class="msg-meta"><small>${m.time.substring(0,5)}</small>${status}</div>
+                `;
+                els.display.appendChild(div);
+            });
+            if (isBottom) els.display.scrollTop = els.display.scrollHeight;
+        } catch(e){}
+    }
+
+    async function send() {
+        const val = els.input.value.trim(); if (!val || !curChat) return;
+        els.input.value = ''; els.mentions.style.display = 'none';
+        
+        await fetch('/api/send', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                sender: myUsername, 
+                receiver: curChat, 
+                text: val, 
+                reply_to: currentReplyData 
+            })
+        });
+        
+        cancelReply();
+        lastCount = ""; await loadMessages();
+        els.display.scrollTop = els.display.scrollHeight;
+    }
+
+    // --- КОНТЕКСТНОЕ МЕНЮ ---
+    function showContext(e, m, el) {
+        e.preventDefault(); selMsg =m; selEl = el;
+        els.context.style.display = 'block';
+        let x = e.pageX, y = e.pageY;
+        if (x + 160 > window.innerWidth) x = window.innerWidth - 170;
+        els.context.style.left = x + 'px'; els.context.style.top = y + 'px';
+        
+        // Показывать Ред/Удалить только для своих
+        document.querySelector('[onclick="prepareEdit()"]').style.display = m.sender === myUsername ? 'block' : 'none';
+        document.querySelector('[onclick="confirmDelete()"]').style.display = m.sender === myUsername ? 'block' : 'none';
+
+        document.querySelectorAll('.msg').forEach(msg => msg.classList.remove('context-active'));
+        el.classList.add('context-active');
+    }
+
+    window.confirmDelete = async () => {
+        if (!confirm("Удалить сообщение?")) return;
+        await fetch('/api/delete_message', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({sender: myUsername, time: selMsg.time, text: selMsg.text})
+        });
+        lastCount = ""; loadMessages();
+    };
+
+    window.prepareEdit = () => {
+        const t = prompt("Редактировать:", selMsg.text.replace(" (ред.)", ""));
+        if (t && t !== selMsg.text) {
+            fetch('/api/edit_message', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({sender: myUsername, time: selMsg.time, old_text: selMsg.text, new_text: t})
+            }).then(() => { lastCount = ""; loadMessages(); });
+        }
+    };
+
+    window.clearCurrentChat = async () => {
+        if (!confirm("Очистить переписку?")) return;
+        await fetch('/api/clear_chat', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({me: myUsername, with_user: curChat})
+        });
+        els.display.innerHTML = ''; lastCount = "";
+    };
+
+    // --- ИНТЕРФЕЙСНЫЕ ФУНКЦИИ ---
+    function triggerAnim() {
+        els.display.classList.remove('chat-appear-active');
+        void els.display.offsetWidth;
+        els.display.classList.add('chat-appear-active');
+    }
+
+    async function updateBadges() {
+        try {
+            const r = await fetch(`/api/messages_all/${myUsername}`); const msgs = await r.json();
+            let c = {}, gm = 0;
+            msgs.forEach(m => {
+                if (m.receiver === myUsername && !m.read && m.sender !== curChat) c[m.sender] = (c[m.sender] || 0) + 1;
+                if (m.receiver === "GLOBAL_CHAT" && m.mentioned_user === myUsername && !m.read && curChat !== "GLOBAL_CHAT") gm++;
+            });
+            document.querySelectorAll('.contact-item').forEach(i => {
+                const n = i.querySelector('span').textContent;
+                let b = i.querySelector('.unread-badge');
+                if (c[n]) { if(!b){b=document.createElement('div');b.className='unread-badge';i.appendChild(b);} b.textContent=c[n]; }
+                else if(b) b.remove();
+            });
+            const gBtn = document.querySelector('.global-chat-btn');
+            let gb = gBtn.querySelector('.unread-badge');
+            if (gm > 0) {
+                if(!gb){const n=document.createElement('div');n.className='unread-badge mention';n.textContent='@';gBtn.appendChild(n);}
+            } else if(gb) gb.remove();
+        } catch(e){}
+    }
+
+    async function updateStatuses() {
+        try {
+            const r = await fetch('/api/users_status'); const s = await r.json();
+            document.querySelectorAll('.contact-item').forEach(i => {
+                const n = i.querySelector('span').textContent;
+                let d = i.querySelector('.status-dot'); if(d)d.remove();
+                if (s[n] === "online") { const dot=document.createElement('div');dot.className='status-dot';i.appendChild(dot); }
+            });
+        } catch(e){}
+    }
+
+    // --- СОБЫТИЯ ---
+    els.input.addEventListener('input', e => {
+        if (curChat) {
+            const now = Date.now();
+            if (now - lastTyping > 2000) { fetch(`/api/typing/${myUsername}/${curChat}`, {method:'POST'}); lastTyping = now; }
+        }
+        const words = e.target.value.split(' '); const last = words[words.length-1];
+        if (last.startsWith('@')) {
+            const f = last.substring(1);
+            const list = myF.filter(n => n.toLowerCase().includes(f.toLowerCase()));
+            if (list.length) {
+                els.mentions.innerHTML = '';
+                list.forEach(u => {
+                    const d = document.createElement('div'); d.className='mention-item'; d.textContent=u;
+                    d.onclick = () => {
+                        words[words.length-1] = '@'+u+' '; els.input.value = words.join(' ');
+                        els.mentions.style.display='none'; els.input.focus();
+                    };
+                    els.mentions.appendChild(d);
+                });
+                els.mentions.style.display='block';
+            } else els.mentions.style.display='none';
+        } else els.mentions.style.display='none';
+    });
+
+    els.search.addEventListener('input', e => {
+        const t = e.target.value.toLowerCase();
+        if (t === "") render(myF); else render(allU.filter(u => u !== myUsername && u.toLowerCase().includes(t)), true);
+    });
+
+    els.send.onclick = send;
+    els.input.onkeypress = e => { if (e.key === 'Enter') send(); };
+    window.closeChat = () => { document.querySelector('.sidebar').classList.remove('mobile-hidden'); curChat = null; };
+    document.addEventListener('click', (e) => { 
+        if (!els.context.contains(e.target)) els.context.style.display = 'none'; 
+        els.mentions.style.display = 'none'; 
+    });
+
+    // --- ЦИКЛ ---
+    await sync();
+    setInterval(async () => {
+        await fetch(`/api/ping/${myUsername}`, {method:'POST'});
+        sync(); loadMessages(); updateBadges(); updateStatuses();
+        if (curChat && curChat !== "GLOBAL_CHAT") {
+            const r = await fetch(`/api/get_typing/${myUsername}/${curChat}`);
+            const d = await r.json();
+            const el = document.getElementById('typingIndicator');
+            if (el) el.style.display = d.typing ? 'block' : 'none';
+        }
+    }, 2000);
+});
+
+function logout() { localStorage.removeItem('currentUser'); window.location.href='login.html'; }
+window.addFriend = async (e, n) => {
+    e.stopPropagation();
+    await fetch('/api/add_friend', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({me: localStorage.getItem('currentUser'), friend: n})});
+    location.reload(); 
+};
+window.deleteFriend = async (e, n) => {
+    e.stopPropagation(); if (!confirm("Удалить друга?")) return;
+    await fetch('/api/delete_friend', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({me: localStorage.getItem('currentUser'), friend: n})});
+    location.reload();
+};
+
+
+
+
+---login.js---
+document.addEventListener('DOMContentLoaded', () => {
+    const loginButton = document.getElementById('LoginButton');
+    const usernameInput = document.getElementById('username');
+    const passwordInput = document.getElementById('password');
+
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+
+        container.appendChild(toast);
+
+        // Удаляем уведомление из DOM через 3 секунды
+        setTimeout(() => {
+            toast.remove();
+        }, 3000);
+    }
+
+    loginButton.addEventListener('click', async () => {
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+
+        if (!username || !password) {
+            alert("Введите логин и пароль!");
+            return;
+        }
+
+        // Хешируем введенный пароль, чтобы сравнить его с тем, что в базе
+        const hashedPassword = CryptoJS.SHA256(password).toString();
+
+        try {
+            const response = await fetch('/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    username: username,
+                    password: hashedPassword // Отправляем хеш
+                })
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                showToast("Добро пожаловать!", "success");
+                
+                // Сохраняем ник в память браузера (для чата)
+                localStorage.setItem('currentUser', username);
+                
+                // Переходим на главную
+                window.location.href = 'index.html'; 
+            } else {
+                showToast(result.message, "error");
+            }
+        } catch (error) {
+            console.error("Ошибка:", error);
+            alert("Ошибка соединения с сервером");
+        }
+    });
+});
+
+
+
+
+---reg.js---
+document.addEventListener('DOMContentLoaded', () => {
+    const regButton = document.getElementById('regButton');
+    const usernameInput = document.getElementById('usernameReg');
+    const passwordInput = document.getElementById('passwordReg');
+    const repeatPassInput = document.getElementById('repeatPassReg');
+
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+
+        container.appendChild(toast);
+
+        // Удаляем уведомление из DOM через 3 секунды
+        setTimeout(() => {
+            toast.remove();
+        }, 3000);
+    }
+
+    regButton.addEventListener('click', async () => {
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+        const repeatPass = repeatPassInput.value;
+
+        // Валидация
+        if (!username || !password || !repeatPass) {
+            showToast("Пожалуйста, заполните все поля!", "error");
+            return;
+        }
+
+        if (password !== repeatPass) {
+            showToast("Пароли не совпадают!", "error");;
+            return;
+        }
+
+        if (password.length < 6) {
+            showToast("Пароль должен быть не менее 6 символов!", "error");
+            return;
+        }
+
+        // Хешируем пароль перед отправкой
+        const hashedPassword = CryptoJS.SHA256(password).toString();
+
+        try {
+            const response = await fetch('/register', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    username: username,
+                    password: hashedPassword // Отправляем хеш
+                })
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                showToast("Регистрация успешна!", "success");
+                window.location.href = 'login.html';
+            } else {
+                alert(result.message);
+            }
+        } catch (error) {
+            console.error("Ошибка:", error);
+            showToast("Ошибка соединения с сервером", "error");
+        }
+    });
+});

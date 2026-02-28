@@ -1,0 +1,578 @@
+@font-face {
+    font-family: "Roboto"; /* Название, которое вы придумали сами */
+    src: url("fonts/RobotoCondensed-VariableFont_wght.ttf") format("truetype"); /* Путь к файлу и его формат */
+    font-weight: normal;
+    font-style: normal;
+}
+
+/* --- ГЛОБАЛЬНЫЕ СТИЛИ --- */
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Roboto"; font-size: 20px;}
+
+body, html { 
+    height: 100%; 
+    font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+    background-color: #f0f2f5; 
+    overflow: hidden; 
+}
+
+/* Обертка для ПК (центрирование мессенджера) */
+.main-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100vh;
+}
+
+.top-logo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.top-logo h1 { font-size: 24px; color: #333; margin-top: -5px; }
+
+/* КОНТЕЙНЕР МЕССЕНДЖЕРА */
+.messenger-container {
+    display: flex;
+    height: 85vh;
+    width: 95%;
+    max-width: 1100px;
+    background: white;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    border: 1px solid #e0e0e0;
+    position: relative;
+}
+
+/* САЙДБАР (Список контактов) */
+.sidebar {
+    width: 320px;
+    background: #ffffff;
+    border-right: 1px solid #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    z-index: 10;
+    transition: transform 0.3s ease;
+}
+
+.user-profile-header {
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #f8f8f8;
+}
+
+#myUsername { font-weight: 700; color: #333; font-size: 17px; }
+
+.btn-logout-small {
+    background: #ff4b2b;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.search-box { padding: 12px 15px; }
+.search-box input {
+    width: 100%;
+    padding: 10px 15px;
+    border-radius: 12px;
+    border: 1px solid #eee;
+    background: #f9f9f9;
+    outline: none;
+}
+
+/* Кнопка общего чата */
+.global-chat-btn {
+    margin: 5px 15px 10px;
+    padding: 12px 15px;
+    background: #e3f2fd;
+    border-radius: 12px;
+    cursor: pointer;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #0077b3;
+}
+
+/* ЭЛЕМЕНТЫ КОНТАКТОВ */
+.contacts-list { flex-grow: 1; overflow-y: auto; }
+.contact-item {
+    padding: 12px 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    border-bottom: 1px solid #fafafa;
+    position: relative;
+}
+.contact-item:hover { background: #f9f9f9; }
+.contact-item.active { background: #e3f2fd; border-left: 4px solid #0088cc; }
+
+/* Аватарка */
+.avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 16px;
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+
+.contact-item-info { display: flex; align-items: center; flex-grow: 1; }
+
+/* Точка онлайн */
+.status-dot {
+    width: 10px;
+    height: 10px;
+    background-color: #4caf50;
+    border-radius: 50%;
+    margin-left: 8px;
+    border: 2px solid white;
+    box-shadow: 0 0 5px rgba(76, 175, 80, 0.5);
+}
+
+/* Кнопка удаления */
+.delete-friend-btn {
+    opacity: 0;
+    background: none;
+    border: none;
+    color: #ff4b2b;
+    cursor: pointer;
+    font-size: 18px;
+}
+.contact-item:hover .delete-friend-btn { opacity: 1; }
+
+/* ОКНО ЧАТА */
+.chat-window {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    background: #f0f2f5;
+    height: 100%;
+    position: relative;
+}
+
+/* ШАПКА ЧАТА (ИСПРАВЛЕННАЯ) */
+.chat-header {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    padding: 0 15px;
+    background: #fff;
+    border-bottom: 1px solid #eee;
+    height: 65px;
+    min-height: 65px; /* Строгая высота */
+    width: 100%;
+    gap: 10px;        /* Расстояние между кнопкой назад и текстом */
+}
+
+.header-text-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex: 1;          /* Занимает всё свободное место */
+    min-width: 0;     /* Важно для работы ellipsis внутри flex */
+}
+
+#chatTitle {
+    font-weight: 600;
+    font-size: 17px;
+    color: #333;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis; /* Три точки если имя слишком длинное */
+}
+
+.typing-text {
+    font-size: 12px;
+    color: #0088cc;
+    font-style: italic;
+    height: 14px;
+    margin-top: 1px;
+    animation: blink 1.5s infinite;
+}
+
+@keyframes blink { 0%, 100% {opacity: 0.5;} 50% {opacity: 1;} }
+
+.clear-chat-btn {
+    font-size: 12px;
+    color: #999;
+    background: #f0f0f0;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+/* 3. Кнопка назад (уменьшим отступы, чтобы не ело место) */
+.back-btn {
+    display: none;
+    background: #0088cc;
+    color: white;
+    border: none;
+    width: 40px;      /* Сделаем её квадратной для экономии места */
+    height: 40px;
+    border-radius: 10px;
+    flex-shrink: 0;   /* Запрещаем кнопке сжиматься */
+    cursor: pointer;
+}
+
+/* СООБЩЕНИЯ */
+/* 4. Область сообщений */
+.messages {
+    flex-grow: 1;
+    padding: 15px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+}
+
+.msg {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 18px;
+    font-size: 15px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    position: relative;
+    
+    /* ВОТ ЭТИ СТРОКИ ИСПРАВЯТ ВЫЛЕТ ТЕКСТА: */
+    word-wrap: break-word;       /* Перенос длинных слов */
+    word-break: break-word;      /* Для старых браузеров */
+    overflow-wrap: break-word;   /* Современный стандарт */
+    display: inline-block;       /* Чтобы пузырек облегал текст */
+}
+
+.my-msg {
+    align-self: flex-end; /* Прижимаем к правому краю */
+    background: #0088cc;
+    color: white;
+    border-bottom-right-radius: 4px;
+    
+    /* ОТСТУП СЛЕВА: гарантирует, что сообщение не коснется левого края */
+    /* margin-right: 10px; */
+}
+.guest-msg { align-self: flex-start; background: #fff; color: #333; border-bottom-left-radius: 4px; margin-right: 15%; }
+
+.msg small { display: block; font-size: 10px; margin-top: 5px; opacity: 0.7; text-align: right; }
+
+/* ОБЛАСТЬ ВВОДА */
+.input-area {
+    background: #fff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-top: 1px solid #eee;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    padding-left: 5px;
+    padding-right: 5px;
+}
+
+.input-area input {
+    flex-grow: 1;
+    padding: 12px 18px;
+    border-radius: 25px;
+    border: 1px solid #f0f0f0;
+    background: #f9f9f9;
+    outline: none;
+}
+
+.btn-send {
+    background: #0088cc;
+    color: white;
+    border: none;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+/* ПРИВЕТСТВЕННЫЙ ЭКРАН */
+.welcome-screen {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    opacity: 0.5;
+}
+
+.big-welcome-logo { width: 180px; margin-bottom: 20px; filter: grayscale(1); }
+
+/* ТОСТЫ (Уведомления) */
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+}
+.toast {
+    background: #333; color: white; padding: 12px 20px;
+    border-radius: 10px; margin-top: 10px; border-left: 5px solid #0088cc;
+}
+
+/* Значки непрочитанных сообщений */
+
+
+.unread-badge.mention {
+    background: #ff4b2b;
+    color: #ffffff;
+    font-size: 12px;
+    border-radius: 50%;
+    min-width: 12px;
+    height: 24px;
+}
+
+/* Выпадающий список упоминаний (@) */
+.mention-suggestions {
+    position: absolute;
+    bottom: 70px;
+    left: 15px;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    box-shadow: 0 -5px 15px rgba(0,0,0,0.1);
+    max-height: 150px;
+    overflow-y: auto;
+    z-index: 100;
+    width: 200px;
+}
+
+.mention-item {
+    padding: 10px 15px;
+    cursor: pointer;
+    font-size: 14px;
+    border-bottom: 1px solid #eee;
+}
+
+.mention-item:hover {
+    background: #f0f2f5;
+    color: #0088cc;
+}
+
+/* Подсветка упоминания в тексте сообщения */
+.mention-highlight {
+    color: #ffeb3b;
+    font-weight: bold;
+}
+.guest-msg .mention-highlight {
+    color: #0088cc;
+}
+
+/* Исправление для кнопки добавления в поиске */
+.add-friend-btn {
+    background: #4caf50;
+    color: white;
+    border: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.unread-badge {
+    background: #0088cc; /* Твой основной синий цвет */
+    color: white;
+    font-size: 12px;
+    font-weight: bold;
+    min-width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    pointer-events: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Красный стиль специально для упоминаний (@) */
+.unread-badge.mention {
+    background: #ff4b2b; /* Красный цвет */
+    font-size: 14px;
+    padding-bottom: 2px; /* Чтобы @ стояла ровно по центру */
+}
+
+/* Контейнер общей мусорки делаем относительным для позиционирования значка */
+.global-chat-btn {
+    position: relative;
+    margin: 5px 15px 10px;
+    padding: 12px 15px;
+    background: #e3f2fd;
+    border-radius: 12px;
+    cursor: pointer;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #0077b3;
+    transition: background 0.2s;
+}
+
+.global-chat-btn:hover {
+    background: #d1e9ff;
+}
+
+/* Стили для элементов списка контактов, чтобы значки стояли ровно */
+.contact-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Контейнер для времени и статуса */
+.msg-meta {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 4px;
+    font-size: 10px;
+    opacity: 0.8;
+}
+
+.read-status {
+    font-size: 12px;
+    line-height: 1;
+}
+
+/* Цвет галочек для прочитанного (синий на белом фоне, белый на синем) */
+.my-msg .read-status.is-read { color: #fff; opacity: 1; }
+.my-msg .read-status { color: #fff; opacity: 0.6; }
+
+.guest-msg .read-status.is-read { color: #0088cc; }
+
+/* МОБИЛЬНАЯ ВЕРСИЯ */
+@media (max-width: 768px) {
+    .top-logo { display: none; }
+    .messenger-container { width: 100%; height: 100vh; border-radius: 0; border: none; }
+    .sidebar { position: absolute; width: 100%; height: 100%; left: 0; top: 0; }
+    .sidebar.mobile-hidden { transform: translateX(-100%); }
+    .back-btn { display: block; }
+    .input-area { padding-bottom: 30px; }
+}
+
+/* Анимация появления контента чата */
+.chat-appear-active {
+    animation: chatFadeIn 0.3s ease-out forwards;
+}
+
+@keyframes chatFadeIn {
+    from { 
+        opacity: 0; 
+        transform: translateY(10px); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateY(0); 
+    }
+}
+
+/* Убедимся, что сообщения не анимируются сами по себе при новых поступлениях */
+.msg {
+    animation: none; 
+}
+
+.context-menu {
+    position: fixed;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+    z-index: 1000;
+    padding: 8px 0;
+    min-width: 150px;
+}
+
+.context-menu div {
+    padding: 10px 20px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: 0.2s;
+}
+
+.context-menu div:hover {
+    background: #f0f2f5;
+}
+
+/* Подсветим сообщение, на которое нажали */
+.msg.context-active {
+    outline: 2px solid #0088cc;
+}
+
+/* Превью над инпутом */
+.reply-preview {
+    background: #fff;
+    padding: 10px 15px;
+    border-top: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.reply-content { border-left: 3px solid #0088cc; padding-left: 10px; overflow: hidden; }
+.reply-content small { color: #0088cc; font-weight: bold; display: block; }
+.reply-content span { font-size: 13px; color: #666; white-space: nowrap; text-overflow: ellipsis; }
+
+/* Цитата внутри сообщения */
+.msg-reply-quote {
+    background: rgba(0,0,0,0.05);
+    border-left: 3px solid #0088cc;
+    padding: 5px 8px;
+    margin-bottom: 5px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.my-msg .msg-reply-quote { background: rgba(255,255,255,0.2); border-left-color: #fff; }
+
+@media (max-width: 768px) {
+    .top-logo { display: none; }
+    
+    .messenger-container { 
+        width: 100%; 
+        height: 100dvh; /* Растягиваем строго по видимой части */
+        border-radius: 0; 
+        border: none; 
+    }
+    
+    .sidebar { 
+        position: absolute; 
+        width: 100%; 
+        height: 100dvh; 
+        left: 0; 
+        top: 0; 
+    }
+
+    /* Самое важное: увеличиваем отступ снизу в области ввода */
+    .input-area { 
+        padding-bottom: env(safe-area-inset-botto+80px); /* Учитываем системные отступы */
+        padding-left: 10px;
+        padding-right: 10px;
+        background: #fff;
+    }
+    
+    /* Чтобы сообщения не прятались за кнопками, если область ввода маленькая */
+    .chat-window {
+        height: 100dvh;
+    }
+}

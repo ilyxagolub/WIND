@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <title>WIDE Регистрация</title>
+    <link rel="icon" type="image/png" href="src/img/favicon.png">
+    <link rel="stylesheet" href="src/css/reg.css">
+    <script src="src/js/reg.js" defer></script>
+</head>
+<body>
+    <img src="src/img/Logo no BG.png" alt="Logo" width="250" height="250" style="margin-top: 150px;">
+
+    <h1 style="text-align: center; font-size: 30px;">Регистрация</h1>
+
+    <div class="data"><input type="username" id="usernameReg" maxlength="20" placeholder="Логин"></div>
+    <div class="data"><input type="password" id="passwordReg" placeholder="Пароль"></div>
+    <div class="data"><input type="password" id="repeatPassReg" placeholder="Повторите пароль"></div>
+
+    <div><button type="button" id="regButton" class="Breg">Регистрация</button></div>
+    
+    <div>
+        <h1>Уже есть аккаунт?</h1>
+        <a href="login.html">Войти</a>
+    </div>
+    <div id="toast-container" class="toast-container"></div>
+</body>
+</html>

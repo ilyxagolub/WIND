@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WIND</title>
+    <link rel="icon" type="image/png" href="src/img/favicon.png">
+    <link rel="stylesheet" href="src/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="src/js/chat.js" defer></script>
+</head>
+<body>
+    <div class="main-wrapper">
+        <!-- Логотип сверху, как в окне логина -->
+        <div class="top-logo">
+            <img src="src/img/Logo no BG.png" alt="Logo" width="80" height="80">
+        </div>
+
+        <div class="messenger-container shadow-box">
+            
+            <!-- Боковая панель -->
+            <aside class="sidebar">
+                <div class="user-profile-header">
+                    <span id="myUsername">Загрузка...</span>
+                    <button onclick="logout()" class="btn-logout-small">Выход</button>
+                </div>
+                
+                <div class="search-box">
+                    <input type="text" id="userSearch" placeholder="Поиск друзей..." autocomplete="off">
+                </div>
+
+                <div class="global-chat-btn" onclick="selectGlobalChat()">
+                    <span>🌍 Общая мусорка</span>
+                </div>
+
+                <div class="contacts-list" id="contactsList">
+                    <!-- Список контактов -->
+                </div>
+            </aside>
+
+            <!-- Основное окно чата -->
+            <main class="chat-window">
+                <div id="chatHeader" class="chat-header">
+                    <span id="chatTitle">Выберите чат, чтобы начать</span>
+                </div>
+                
+                <div class="messages" id="messagesDisplay">
+                    <div class="welcome-screen">
+                        <!-- Большой логотип для ПК -->
+                         <p>Выберите контакт, чтобы начать общение</p>
+                        <img src="src/img/Logo no BG.png" alt="WIDE LOGO" class="big-welcome-logo">
+                    </div>
+                </div>
+
+                <div id="mentionList" class="mention-suggestions" style="display: none;"></div>
+                <div id="replyPreview" class="reply-preview" style="display: none;">
+                    <div class="reply-content">
+                        <small id="replyUser"></small>
+                        <span id="replyText"></span>
+                    </div>
+                    <button onclick="cancelReply()">✕</button>
+                </div>
+                <div class="input-area">
+                    <input type="text" id="messageInput" placeholder="Ваше сообщение..." autocomplete="off">
+                    <button id="sendBtn" class="btn-send">➤</button>
+                </div>
+            </main>
+
+        </div>
+    </div>
+    <div id="toast-container" class="toast-container"></div>
+    <div id="contextMenu" class="context-menu" style="display: none;">
+         <div onclick="prepareReply()">💬 Ответить</div>
+        <div onclick="prepareEdit()">✏️ Редактировать</div>
+        <div onclick="confirmDelete()" style="color: #ff4b2b;">🗑️ Удалить</div>
+    </div>
+</body>
+</html>
